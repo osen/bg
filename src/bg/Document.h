@@ -1,9 +1,11 @@
 #ifndef BG_DOCUMENT_H
 #define BG_DOCUMENT_H
 
+#include <palloc/sstream.h>
+
 struct bgDocument
 {
-  int dummy;
+  struct sstream json;
 };
 
 #endif
