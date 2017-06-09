@@ -19,6 +19,8 @@ int main(int argc, char *argv[])
   bgErrorFunc(on_error);
   bgSuccessFunc(on_success);
 
+  bgCollectionCreate("Test");
+
   bgCleanup();
 
   return 0;

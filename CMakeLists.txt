@@ -7,11 +7,21 @@ include_directories(
 )
 
 add_library(bg
-  src/bg/mongoose.c
+  #src/bg/mongoose.c
+  #To be replaced by Karsten's single-file replacement
+  
+  #JSON Stuff
   src/bg/parson.c
-  src/ann/ann.c
-  src/ann/vector.c
-  src/bg/StringStream.c
+  
+  #src/ann/ann.c
+  src/palloc/palloc.c
+  
+  #src/ann/vector.c
+  src/palloc/vector.c
+  
+  #src/bg/StringStream.c
+  src/palloc/sstream.c
+  
   src/bg/Document.c
   src/bg/Collection.c
   src/bg/State.c
