@@ -4,6 +4,7 @@
 /*#include <ann/ann.h>
 #include <ann/vector.h>*/
 #include <palloc\palloc.h>
+#include "parson.h"
 
 struct bgState *bg;
 
@@ -21,6 +22,12 @@ ANN_INC(bg->collections,
   bg = palloc(struct bgState);
   bg->collections = vector_new(struct bgCollection *);
   bg->interval = 2000;
+  
+  /* I'm sure there's a way to do this
+#ifdef PALLOC_ACTIVE
+  json_set_allocation_functions(palloc(), pfree);
+#endif
+  */
 }
 
 void bgCleanup()
