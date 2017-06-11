@@ -3,7 +3,7 @@
 
 #include "State.h"
 
-#include "palloc\palloc.h"
+#include "palloc/palloc.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -33,10 +33,12 @@ void bgCollectionAdd(char *cln, struct bgDocument *doc)
 void bgCollectionUpload(char *cln)
 {
   /* New thread is launched to carry out this process 
-    Placeholder serialise and print instead
+  DEBUG Placeholder to serialise and print instead
   */
   char* ser = NULL;
-  JSON_Value* v = vector_at(bgCollectionGet(cln)->documents, 0)->rootVal;
+  struct bgCollection* c = bgCollectionGet(cln);
+  JSON_Value* v = vector_at(c->documents, 0)->rootVal;
+  size_t i = 0;
   ser = json_serialize_to_string_pretty(v);
 
   if(ser != NULL)
@@ -44,17 +46,43 @@ void bgCollectionUpload(char *cln)
   else
     puts("shit");
 
+
+  for(i = 0; i < vector_size(c->documents); i++)
+  {
+    if(vector_at(c->documents, i))
+    {
+      bgDocumentDestroy(vector_at(c->documents, i));
+    }
+  }
+  vector_delete(c->documents);
+  c->documents = NULL;
 }
 
+void bgCollectionSaveAndDestroy(struct bgCollection *cln)
+{
+  bgCollectionUpload(sstream_cstr(cln->name));
+  bgCollectionDestroy(cln);
+}
+/* Destroys collection and containing documents w/o upload */
 void bgCollectionDestroy(struct bgCollection *cln)
 {
-  /* Last data upload would be here */
+  
+  /* Document destruction is Possibly complex */
+  size_t i = 0;
+  if(cln->documents != NULL)
+  {
+    for(i = 0; i < vector_size(cln->documents); i++)
+    {
+      if(vector_at(cln->documents, i))
+      {
+        bgDocumentDestroy(vector_at(cln->documents, i));
+      }
+    }
+    vector_delete(cln->documents);
+  }
 
-  /* Document destruction is possibly complex */
+  sstream_delete(cln->name);
 
-
-  vector_delete(cln->documents);
-  pfree(cln->name);
   pfree(cln);
 
   cln = NULL;

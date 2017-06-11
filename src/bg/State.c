@@ -3,7 +3,7 @@
 
 /*#include <ann/ann.h>
 #include <ann/vector.h>*/
-#include <palloc\palloc.h>
+#include <palloc/palloc.h>
 #include "parson.h"
 
 struct bgState *bg;
@@ -33,17 +33,6 @@ ANN_INC(bg->collections,
 void bgCleanup()
 {
   /*
-ANN_DEC(bg->collections,
-  vector_free_contents(bg->collections, bgCollectionDestroy);
-  bg->collections = NULL;
-)
-ANN_DEL(bg,
-  free(bg);
-  bg = NULL;
-)
-  AnnStats();
-  */
-  /*
   Looping throough and calling 'destructor'
   and then deleting remnants with vector_delete
   */
@@ -54,7 +43,7 @@ ANN_DEL(bg,
     bgCollectionDestroy(vector_at(bg->collections, i));
   }
   vector_delete(bg->collections);
-
+  
   pfree(bg);
 }
 

@@ -7,8 +7,11 @@
 
 struct bgDocument
 {
-  JSON_Value *rootVal;
+  JSON_Value  *rootVal;
   JSON_Object *rootObj;
+  JSON_Array  *rootArr;
 };
+
+void bgDocumentDestroy(struct bgDocument *doc);
 
 #endif
