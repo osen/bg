@@ -1,4 +1,5 @@
 #include <bg/analytics.h>
+#include <http/http.h>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -15,11 +16,38 @@ void on_success(char *cln, int count)
 
 }
 
+void http_test()
+{
+  struct Http *http = NULL;
+
+  http = HttpCreate();
+  HttpAddCustomHeader(http, "Some-Header", "Thisisavalue");
+
+  HttpRequest(http,
+    "http://portal.quickvr.me/nv/client/ChannelList-getChanList?something=7",
+    NULL);
+
+  while(!HttpRequestComplete(http))
+  {
+#ifdef _MSC_VER
+    Sleep(10);
+#else
+    usleep(1000);
+#endif
+  }
+
+  printf("Portal status: %i\n", HttpResponseStatus(http));
+  printf("Portal content: %s\n", HttpResponseContent(http));
+
+  HttpDestroy(http);
+}
+
 int main(int argc, char *argv[])
 {
   struct bgDocument *doc;
   doc = bgDocumentCreate();
 
+  http_test();
   bgAuth(NULL, NULL, "", "");
 
   bgErrorFunc(on_error);

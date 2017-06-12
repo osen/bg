@@ -12,6 +12,12 @@ add_library(palloc
   src/palloc/sstream.c
 )
 
+add_library(http
+  src/http/http.c
+)
+
+target_link_libraries(http palloc)
+
 add_library(bg
   #src/bg/mongoose.c
   #To be replaced by Karsten's single-file replacement
@@ -24,7 +30,7 @@ add_library(bg
   src/bg/State.c
 )
 
-target_link_libraries(bg palloc)
+target_link_libraries(bg http)
 
 add_executable(example
   src/example/main.c
