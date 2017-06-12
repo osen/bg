@@ -41,6 +41,8 @@ void bgCollectionUpload(char *cln)
   size_t i = 0;
   ser = json_serialize_to_string_pretty(v);
 
+  // LEAK: ser must be free'd when no longer in use.
+
   if(ser != NULL)
     puts(ser);
   else
@@ -49,12 +51,18 @@ void bgCollectionUpload(char *cln)
 
   for(i = 0; i < vector_size(c->documents); i++)
   {
+    // NOTE: Should this need a NULL check?
     if(vector_at(c->documents, i))
     {
       bgDocumentDestroy(vector_at(c->documents, i));
     }
   }
+
   vector_delete(c->documents);
+
+  // NOTE: Instead of deleting the vector each time, just use vector_clear
+  // to reuse and only delete it when the collection is destroyed.
+
   c->documents = NULL;
 }
 
@@ -63,10 +71,10 @@ void bgCollectionSaveAndDestroy(struct bgCollection *cln)
   bgCollectionUpload(sstream_cstr(cln->name));
   bgCollectionDestroy(cln);
 }
+
 /* Destroys collection and containing documents w/o upload */
 void bgCollectionDestroy(struct bgCollection *cln)
 {
-  
   /* Document destruction is Possibly complex */
   size_t i = 0;
   if(cln->documents != NULL)

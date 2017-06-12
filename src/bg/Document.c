@@ -24,6 +24,9 @@ void bgDocumentDestroy(struct bgDocument *doc)
 {
   /*unwinds json_val list structure and frees memory*/
   json_value_free(doc->rootVal);
+
+  // LEAK:
+  // pfree(doc)?
 }
 
 void bgDocumentAddCStr(struct bgDocument *doc, char *path, char *val)
