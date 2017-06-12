@@ -6,6 +6,12 @@ include_directories(
   ${PROJECT_SOURCE_DIR}/include
 )
 
+add_library(palloc
+  src/palloc/palloc.c
+  src/palloc/vector.c
+  src/palloc/sstream.c
+)
+
 add_library(bg
   #src/bg/mongoose.c
   #To be replaced by Karsten's single-file replacement
@@ -13,19 +19,12 @@ add_library(bg
   #JSON Stuff
   src/bg/parson.c
   
-  #src/ann/ann.c
-  src/palloc/palloc.c
-  
-  #src/ann/vector.c
-  src/palloc/vector.c
-  
-  #src/bg/StringStream.c
-  src/palloc/sstream.c
-  
   src/bg/Document.c
   src/bg/Collection.c
   src/bg/State.c
 )
+
+target_link_libraries(bg palloc)
 
 add_executable(example
   src/example/main.c

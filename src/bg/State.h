@@ -1,8 +1,7 @@
 #ifndef BG_STATE_H
 #define BG_STATE_H
 
-//#include <ann/vector.h>
-#include <palloc\vector.h>
+#include <palloc/vector.h>
 
 struct bgCollection;
 
