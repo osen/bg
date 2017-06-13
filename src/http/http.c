@@ -37,6 +37,13 @@
 
 #define BUFFER_SIZE 1024
 
+#ifdef USE_POSIX
+  #define NULL_SOCKET -1
+#endif
+#ifdef USE_WINSOCK
+  #define NULL_SOCKET INVALID_SOCKET
+#endif
+
 static int winsockInitialized;
 
 struct CustomHeader
@@ -95,7 +102,7 @@ int HttpState(struct Http *ctx)
   {
     return HTTP_CONNECTING;
   }
-  else if(ctx->sock != -1)
+  else if(ctx->sock != NULL_SOCKET)
   {
     return HTTP_RECEIVING;
   }
@@ -138,7 +145,7 @@ struct Http *HttpCreate()
   rtn->rawHeaders = sstream_new();
   rtn->socks = vector_new(int);
   rtn->customHeaders = vector_new(struct CustomHeader);
-  rtn->sock = -1;
+  rtn->sock = NULL_SOCKET;
   rtn->host = sstream_new();
   rtn->path = sstream_new();
   rtn->query = sstream_new();
@@ -250,9 +257,14 @@ void _HttpPollConnect(struct Http *ctx)
     break;
   }
 
-  if(ctx->sock == -1 && vector_size(ctx->socks) < 1)
+  if(ctx->sock == NULL_SOCKET && vector_size(ctx->socks) < 1)
   {
     ctx->status = -1;
+    return;
+  }
+
+  if(ctx->sock == NULL_SOCKET)
+  {
     return;
   }
 
@@ -387,7 +399,7 @@ void _HttpProcessRaw(struct Http *ctx)
 
   if(sstream_length(ctx->rawHeaders) == 0) return;
 
-  if(ctx->sock == -1)
+  if(ctx->sock == NULL_SOCKET)
   {
     size_t i = 0;
 
@@ -425,7 +437,7 @@ void _HttpPollReceive(struct Http *ctx)
     shutdown(ctx->sock, SD_BOTH);
     closesocket(ctx->sock);
 #endif
-    ctx->sock = -1;
+    ctx->sock = NULL_SOCKET;
     return;
   }
   else
@@ -441,10 +453,9 @@ void _HttpPollReceive(struct Http *ctx)
 #endif
 #ifdef USE_WINSOCK
     int n = 0;
-
     n = recv(ctx->sock, buff, BUFFER_SIZE - 1, 0);
 
-    if(n != SOCKET_ERROR)
+    if(n != SOCKET_ERROR && n != 0)
 #endif
     {
       for(i = 0; i < n; i++)
@@ -463,7 +474,7 @@ void _HttpPollReceive(struct Http *ctx)
       shutdown(ctx->sock, SD_BOTH);
       closesocket(ctx->sock);
 #endif
-      ctx->sock = -1;
+      ctx->sock = NULL_SOCKET;
     }
 
     _HttpProcessRaw(ctx);
@@ -570,7 +581,7 @@ void HttpRequest(struct Http *ctx, char *url, char *post)
 
   for(ent = res; ent != NULL; ent = ent->ai_next)
   {
-    int sock = -1;
+    int sock = NULL_SOCKET;
 
     if(ent->ai_family != AF_INET && ent->ai_family != AF_INET6)
     {
@@ -579,7 +590,7 @@ void HttpRequest(struct Http *ctx, char *url, char *post)
 
     sock = socket(ent->ai_family, ent->ai_socktype, 0);
 
-    if(sock == -1)
+    if(sock == NULL_SOCKET)
     {
       continue;
     }
@@ -637,7 +648,7 @@ void HttpRequest(struct Http *ctx, char *url, char *post)
     _HttpClearSocks(ctx);
   }
 
-  if(ctx->sock == -1 && vector_size(ctx->socks) < 1)
+  if(ctx->sock == NULL_SOCKET && vector_size(ctx->socks) < 1)
   {
     ctx->status = -1;
   }
