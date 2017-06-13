@@ -1,6 +1,10 @@
 #include <bg/analytics.h>
 #include <http/http.h>
 
+#ifdef _WIN32
+  #include <windows.h>
+#endif
+
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -29,7 +33,7 @@ void http_test()
 
   while(!HttpRequestComplete(http))
   {
-#ifdef _MSC_VER
+#ifdef _WIN32
     Sleep(10);
 #else
     usleep(1000);

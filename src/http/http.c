@@ -4,6 +4,13 @@
 #include <palloc/vector.h>
 #include <palloc/sstream.h>
 
+#ifdef _WIN32
+  #define USE_WINSOCK
+  #define USE_WINAPI
+#else
+  #define USE_POSIX
+#endif
+
 #ifdef USE_WINSOCK
   #define WIN32_LEAN_AND_MEAN
   #include <windows.h>
@@ -29,6 +36,8 @@
 #define HTTP_COMPLETE 3
 
 #define BUFFER_SIZE 1024
+
+static int winsockInitialized;
 
 struct CustomHeader
 {
@@ -94,19 +103,32 @@ int HttpState(struct Http *ctx)
   return HTTP_COMPLETE;
 }
 
+#ifdef USE_WINSOCK
+void _HttpShutdownWinsock()
+{
+  WSACleanup();
+}
+#endif
+
 struct Http *HttpCreate()
 {
   struct Http *rtn = NULL;
 #ifdef USE_WINSOCK
-  WSADATA wsaData = {0};
-  int result = 0;
-
-  result = WSAStartup(MAKEWORD(2, 2), &wsaData);
-
-  if(result != 0)
+  if(!winsockInitialized)
   {
-    printf("WSAStartup failed with error: %d\n", result);
-    return NULL;
+    WSADATA wsaData = {0};
+    int result = 0;
+
+    result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+    if(result != 0)
+    {
+      printf("WSAStartup failed with error: %d\n", result);
+      return NULL;
+    }
+
+    winsockInitialized = 1;
+    atexit(_HttpShutdownWinsock);
   }
 #endif
 

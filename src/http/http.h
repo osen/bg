@@ -25,13 +25,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef HTTP_H
 #define HTTP_H
 
-#ifdef _MSC_VER
-  #define USE_WINSOCK
-  #define USE_WINAPI
-#else
-  #define USE_POSIX
-#endif
-
 struct Http *HttpCreate();
 void HttpDestroy(struct Http *ctx);
 

@@ -16,7 +16,11 @@ add_library(http
   src/http/http.c
 )
 
-target_link_libraries(http palloc)
+if(WIN32)
+  set(PLATFORM_LIBS "ws2_32")
+endif()
+
+target_link_libraries(http palloc ${PLATFORM_LIBS})
 
 add_library(bg
   #src/bg/mongoose.c
