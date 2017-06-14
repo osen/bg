@@ -1,9 +1,11 @@
 #ifndef BG_DOCUMENT_H
 #define BG_DOCUMENT_H
 
-/*#include <palloc/sstream.h>*/
-#include <palloc/vector.h>
-#include "parson.h"
+#ifndef AMALGAMATION
+  /*#include <palloc/sstream.h>*/
+  #include <palloc/vector.h>
+  #include "parson.h"
+#endif
 
 struct bgDocument
 {

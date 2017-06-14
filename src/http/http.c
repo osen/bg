@@ -1,8 +1,10 @@
-#include "http.h"
+#ifndef AMALGAMATION
+  #include "http.h"
 
-#include <palloc/palloc.h>
-#include <palloc/vector.h>
-#include <palloc/sstream.h>
+  #include <palloc/palloc.h>
+  #include <palloc/vector.h>
+  #include <palloc/sstream.h>
+#endif
 
 #ifdef _WIN32
   #define USE_WINSOCK

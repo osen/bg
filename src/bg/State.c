@@ -1,10 +1,10 @@
-#include "State.h"
-#include "Collection.h"
+#ifndef AMALGAMATION
+  #include "State.h"
+  #include "Collection.h"
+  #include "parson.h"
 
-/*#include <ann/ann.h>
-#include <ann/vector.h>*/
-#include <palloc/palloc.h>
-#include "parson.h"
+  #include <palloc/palloc.h>
+#endif
 
 struct bgState *bg;
 

@@ -1,7 +1,9 @@
 #ifndef PALLOC_SSTREAM_H
 #define PALLOC_SSTREAM_H
 
-#include "vector.h"
+#ifndef AMALGAMATION
+  #include "vector.h"
+#endif
 
 #include <stdlib.h>
 

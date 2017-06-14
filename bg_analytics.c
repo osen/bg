@@ -1,3 +1,1592 @@
+#include "bg_analytics.h"
+#ifndef AMALGAMATION
+  #include "palloc.h"
+#endif
+
+#include <stdio.h>
+#include <string.h>
+
+static int registered;
+
+struct PoolEntry
+{
+  void *ptr;
+  size_t size;
+  char *type;
+  int used;
+  struct PoolEntry *next;
+};
+
+struct PoolEntry *poolHead;
+
+void pool_cleanup()
+{
+  struct PoolEntry *curr = poolHead;
+
+  printf("[palloc]Evaluating memory...\n");
+
+  while(curr)
+  {
+    struct PoolEntry *tmp = curr;
+
+    if(curr->used)
+    {
+      printf("[palloc]Leak\n");
+      printf("  Type: %s\n", curr->type);
+      printf("  Size: %i\n", (int)curr->size);
+      printf("  Used: %i\n", curr->used);
+    }
+    else
+    {
+      size_t i = 0;
+      char *ptr = (char*)curr->ptr;
+      int dirty = 0;
+
+      for(i = 0; i < curr->size; i++)
+      {
+        if(*ptr != PALLOC_SENTINEL)
+        {
+          dirty = 1;
+        }
+
+        ptr++;
+      }
+
+      if(dirty == 1)
+      {
+        printf("[palloc]Use after free\n");
+        printf("  Type: %s\n", curr->type);
+        printf("  Size: %i\n", (int)curr->size);
+      }
+    }
+
+    curr = curr->next;
+
+    free(tmp->ptr);
+    free(tmp->type);
+    free(tmp);
+  }
+
+  poolHead = NULL;
+}
+
+#ifdef PALLOC_ACTIVE
+void pfree(void *ptr)
+{
+  struct PoolEntry *entry = poolHead;
+
+  while(entry)
+  {
+    if(entry->ptr == ptr)
+    {
+      if(!entry->used)
+      {
+        printf("Error: Memory already freed\n");
+      }
+
+#ifdef PALLOC_DEBUG
+      printf("Freeing: %s\n", entry->type);
+#endif
+      memset(entry->ptr, PALLOC_SENTINEL, entry->size);
+      entry->used = 0;
+      return;
+    }
+
+    entry = entry->next;
+  }
+
+  printf("Error: Memory not managed by pool\n");
+}
+#else
+void pfree(void *ptr)
+{
+  free(ptr);
+}
+#endif
+
+#ifdef PALLOC_ACTIVE
+void *_palloc(size_t size, char *type)
+{
+  struct PoolEntry *entry = poolHead;
+
+  if(!registered)
+  {
+    printf("[palloc]Registering hook...\n");
+    registered = 1;
+    atexit(pool_cleanup);
+  }
+
+  while(entry)
+  {
+    if(!entry->used && strcmp(type, entry->type) == 0)
+    {
+      char *ptr = (char *)entry->ptr;
+      size_t i = 0;
+      int dirty = 0;
+
+#ifdef PALLOC_DEBUG
+      printf("Reusing: %s\n", type);
+#endif
+
+      for(i = 0; i < entry->size; i++)
+      {
+        if(*ptr != PALLOC_SENTINEL)
+        {
+          dirty = 1;
+          break;
+        }
+
+        ptr++;
+      }
+
+      if(dirty)
+      {
+        printf("[palloc]Use after free\n");
+        printf("  Type: %s\n", entry->type);
+        printf("  Size: %i\n", (int)entry->size);
+      }
+
+      entry->used = 1;
+
+      if(PALLOC_SENTINEL != 0)
+      {
+        memset(entry->ptr, 0, entry->size);
+      }
+
+      return entry->ptr;
+    }
+
+    entry = entry->next;
+  }
+
+#ifdef PALLOC_DEBUG
+  printf("Allocating: %s\n", type);
+#endif
+  entry = calloc(1, sizeof(*entry));
+  if(!entry) return NULL;
+
+  entry->ptr = calloc(1, size);
+
+  if(!entry->ptr)
+  {
+    free(entry);
+    return NULL;
+  }
+
+  entry->size = size;
+  entry->type = calloc(strlen(type) + 1, sizeof(char));
+  strcpy(entry->type, type);
+  entry->used = 1;
+
+  entry->next = poolHead;
+  poolHead = entry;
+
+  return entry->ptr;
+}
+#else
+void *_palloc(size_t size, char *type)
+{
+  void *rtn = NULL;
+
+  rtn = calloc(1, size);
+
+  return rtn;
+}
+#endif
+
+#ifndef AMALGAMATION
+  #include "vector.h"
+  #include "palloc.h"
+#endif
+
+#include <string.h>
+
+void *_VectorNew(size_t size, char *type)
+{
+  struct _Vector *rtn = NULL;
+  char typeStr[256] = {0};
+
+  strcpy(typeStr, "vector(");
+  strcat(typeStr, type);
+  strcat(typeStr, ")");
+  rtn = _palloc(sizeof(*rtn), typeStr);
+
+  strcpy(typeStr, "vector_header(");
+  strcat(typeStr, type);
+  strcat(typeStr, ")");
+  rtn->vh = _palloc(sizeof(*rtn->vh), typeStr);
+  rtn->vh->entrySize = size;
+
+  return rtn;
+}
+
+int _VectorOobAssert(void *_vh, size_t idx)
+{
+  struct _VectorHeader *vh = _vh;
+
+  if(vh->size <= idx)
+  {
+    printf("Error: Index out of bounds\n");
+    return 1;
+  }
+
+  return 0;
+}
+
+void _VectorErase(void *_vh, void *_v, size_t idx)
+{
+  struct _VectorHeader *vh = _vh;
+  struct _Vector *v = _v;
+  size_t restSize = (vh->size - (idx + 1)) * vh->entrySize;
+
+  _VectorOobAssert(_vh, idx);
+
+  if(restSize > 0)
+  {
+    char *element = (char *)v->data + idx * vh->entrySize;
+    char *rest = element + vh->entrySize;
+    memmove(element, rest, restSize);
+  }
+
+  vh->size --;
+}
+
+void _VectorResize(void *_vh, void *_v, size_t size)
+{
+  struct _Vector *v = _v;
+  struct _VectorHeader *vh = _vh;
+
+  if(vh->size == size)
+  {
+    return;
+  }
+  else if(size == 0)
+  {
+    if(v->data)
+    {
+      free(v->data);
+      v->data = NULL;
+    }
+  }
+  else if(vh->size > size)
+  {
+    v->data = realloc(v->data, size * vh->entrySize);
+
+    if(!v->data)
+    {
+      /* TODO: Should cache and revert */
+      printf("Error: Failed to reallocate\n");
+    }
+  }
+  else if(vh->size < size)
+  {
+    char *cur = NULL;
+    char *last = NULL;
+
+    v->data = realloc(v->data, size * vh->entrySize);
+
+    if(!v->data)
+    {
+      /* TODO: Should cache and revert */
+      printf("Error: Failed to reallocate\n");
+    }
+
+    cur = v->data;
+    cur += vh->size * vh->entrySize;
+    last = v->data;
+    last += size * vh->entrySize;
+
+    while(cur != last)
+    {
+      *cur = 0;
+      cur++;
+    }
+  }
+
+  vh->size = size;
+}
+
+size_t _VectorSize(void *_vh)
+{
+  struct _VectorHeader *vh = _vh;
+
+  return vh->size;
+}
+
+void _VectorDelete(void *_vh, void *_v)
+{
+  struct _Vector *v = _v;
+  struct _VectorHeader *vh = _vh;
+
+  if(v->vh != vh)
+  {
+    printf("Error: Invalid vector\n");
+  }
+
+  if(v->data)
+  {
+    free(v->data);
+  }
+
+  pfree(vh);
+  pfree(v);
+}
+
+
+#ifndef AMALGAMATION
+  #include "sstream.h"
+  #include "palloc.h"
+#endif
+
+#include <string.h>
+#include <stdio.h>
+
+struct sstream *sstream_new()
+{
+  struct sstream *rtn = NULL;
+
+  rtn = palloc(struct sstream);
+
+  return rtn;
+}
+
+void sstream_clear(struct sstream *ctx)
+{
+  struct Chunk *curr = ctx->first;
+
+  while(curr)
+  {
+    struct Chunk *tmp = curr;
+
+    curr = curr->next;
+    if(tmp->s) free(tmp->s);
+    pfree(tmp);
+  }
+
+  ctx->first = NULL;
+}
+
+void sstream_delete(struct sstream *ctx)
+{
+  sstream_clear(ctx);
+  pfree(ctx);
+}
+
+void sstream_push_int(struct sstream *ctx, int val)
+{
+  char buffer[128] = {0};
+
+  sprintf(buffer, "%i", val);
+  sstream_push_cstr(ctx, buffer);
+}
+
+void sstream_push_float(struct sstream *ctx, float val)
+{
+  char buffer[128] = {0};
+
+  sprintf(buffer, "%f", val);
+  sstream_push_cstr(ctx, buffer);
+}
+
+void sstream_push_double(struct sstream *ctx, double val)
+{
+  char buffer[128] = {0};
+
+  sprintf(buffer, "%f", val);
+  sstream_push_cstr(ctx, buffer);
+}
+
+void sstream_push_char(struct sstream *ctx, char val)
+{
+/*
+  char buffer[2] = {0};
+
+  buffer[0] = val;
+  sstream_push_cstr(ctx, buffer);
+*/
+
+  struct Chunk *nc = NULL;
+  struct Chunk *curr = NULL;
+
+  nc = palloc(struct Chunk);
+  nc->c = val;
+  nc->len = 1;
+
+  if(!ctx->first)
+  {
+    ctx->first = nc;
+    return;
+  }
+
+  curr = ctx->first;
+
+  while(curr->next)
+  {
+    curr = curr->next;
+  }
+
+  curr->next = nc;
+}
+
+void sstream_push_cstr(struct sstream *ctx, char *s)
+{
+  struct Chunk *nc = NULL;
+  struct Chunk *curr = NULL;
+  size_t len = strlen(s);
+
+  if(len < 1) return;
+
+  nc = palloc(struct Chunk);
+  nc->s = malloc(sizeof(char) * (len + 1));
+  strcpy(nc->s, s);
+  nc->len = len;
+
+  if(!ctx->first)
+  {
+    ctx->first = nc;
+    return;
+  }
+
+  curr = ctx->first;
+
+  while(curr->next)
+  {
+    curr = curr->next;
+  }
+
+  curr->next = nc;
+}
+
+void sstream_collate(struct sstream *ctx)
+{
+  size_t allocSize = 0;
+  struct Chunk *curr = ctx->first;
+  char *ns = NULL;
+
+  if(!curr) return;
+
+  if(curr->s)
+  {
+    if(!curr->next) return;
+  }
+
+  while(curr)
+  {
+    allocSize += curr->len;
+    curr = curr->next;
+  }
+
+  allocSize++;
+  ns = malloc(allocSize * sizeof(char));
+  ns[0] = '\0';
+  curr = ctx->first;
+
+  while(curr)
+  {
+    struct Chunk *tmp = curr;
+
+    if(!curr->s)
+    {
+      char cs[2] = {0};
+
+      cs[0] = curr->c;
+      strcat(ns, cs);
+    }
+    else
+    {
+      strcat(ns, curr->s);
+    }
+
+    curr = curr->next;
+    if(tmp->s) free(tmp->s);
+    pfree(tmp);
+  }
+
+  ctx->first = palloc(struct Chunk);
+  ctx->first->s = ns;
+  ctx->first->len = allocSize - 1;
+}
+
+char *sstream_cstr(struct sstream *ctx)
+{
+  sstream_collate(ctx);
+
+  if(!ctx->first) return "";
+
+  return ctx->first->s;
+}
+
+size_t sstream_length(struct sstream *ctx)
+{
+  sstream_collate(ctx);
+
+  if(!ctx->first) return 0;
+
+  return ctx->first->len;
+}
+
+int sstream_int(struct sstream *ctx)
+{
+  sstream_collate(ctx);
+
+  if(!ctx->first) return 0;
+
+  return atoi(ctx->first->s);
+}
+
+char sstream_at(struct sstream *ctx, size_t i)
+{
+  sstream_collate(ctx);
+
+  if(!ctx->first)
+  {
+    printf("Error: Stream is empty\n");
+    abort();
+  }
+
+  if(i >= ctx->first->len)
+  {
+    printf("Error: Index out of bounds\n");
+    abort();
+  }
+
+  return ctx->first->s[i];
+}
+
+void sstream_push_chars(struct sstream *ctx, char *values, size_t count)
+{
+  char *tmp = NULL;
+
+  tmp = malloc(sizeof(char) * (count + 1));
+  tmp[count] = 0;
+  memcpy(tmp, values, sizeof(char) * count);
+  sstream_push_cstr(ctx, tmp);
+
+  free(tmp);
+}
+
+void sstream_split(struct sstream *ctx, char token,
+  vector(struct sstream*) *out)
+{
+  size_t i = 0;
+  struct sstream *curr = NULL;
+
+  curr = sstream_new();
+
+  for(i = 0; i < sstream_length(ctx); i++)
+  {
+    if(sstream_at(ctx, i) == token)
+    {
+      vector_push_back(out, curr);
+      curr = sstream_new();
+    }
+    else
+    {
+      sstream_push_char(curr, sstream_at(ctx, i));
+    }
+  }
+
+  if(sstream_length(curr) > 0)
+  {
+    vector_push_back(out, curr);
+  }
+  else
+  {
+    sstream_delete(curr);
+  }
+}
+
+#ifndef AMALGAMATION
+  #include "http.h"
+
+  #include <palloc/palloc.h>
+  #include <palloc/vector.h>
+  #include <palloc/sstream.h>
+#endif
+
+#ifdef _WIN32
+  #define USE_WINSOCK
+  #define USE_WINAPI
+#else
+  #define USE_POSIX
+#endif
+
+#ifdef USE_WINSOCK
+  #define WIN32_LEAN_AND_MEAN
+  #include <windows.h>
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+#endif
+
+#ifdef USE_POSIX
+  #include <sys/socket.h>
+  #include <sys/types.h>
+  #include <netinet/in.h>
+  #include <arpa/inet.h>
+  #include <netdb.h>
+  #include <fcntl.h>
+  #include <errno.h>
+#endif
+
+#include <stdio.h>
+#include <string.h>
+
+#define HTTP_CONNECTING 1
+#define HTTP_RECEIVING 2
+#define HTTP_COMPLETE 3
+
+#define BUFFER_SIZE 1024
+
+#ifdef USE_POSIX
+  #define NULL_SOCKET -1
+#endif
+#ifdef USE_WINSOCK
+  #define NULL_SOCKET INVALID_SOCKET
+#endif
+
+static int winsockInitialized;
+
+struct CustomHeader
+{
+  sstream *variable;
+  sstream *value;
+};
+
+struct Http
+{
+  sstream *host;
+  sstream *path;
+  sstream *query;
+  sstream *post;
+  vector(char) *raw;
+  vector(int) *socks;
+  sstream *rawHeaders;
+  sstream *rawContent;
+  vector(struct CustomHeader) *customHeaders;
+  int sock;
+  int status;
+};
+
+void HttpAddCustomHeader(struct Http *ctx, char *variable, char *value)
+{
+  struct CustomHeader ch = {0};
+
+  ch.variable = sstream_new();
+  sstream_push_cstr(ch.variable, variable);
+  ch.value = sstream_new();
+  sstream_push_cstr(ch.value, value);
+  vector_push_back(ctx->customHeaders, ch);
+}
+
+void _HttpClearSocks(struct Http *ctx)
+{
+  size_t i = 0;
+
+  for(i = 0; i < vector_size(ctx->socks); i++)
+  {
+#ifdef USE_POSIX
+    close(vector_at(ctx->socks, i));
+#endif
+#ifdef USE_WINSOCK
+    shutdown(vector_at(ctx->socks, i), SD_BOTH);
+    closesocket(vector_at(ctx->socks, i));
+#endif
+  }
+
+  vector_clear(ctx->socks);
+}
+
+int HttpState(struct Http *ctx)
+{
+  if(vector_size(ctx->socks) > 0)
+  {
+    return HTTP_CONNECTING;
+  }
+  else if(ctx->sock != NULL_SOCKET)
+  {
+    return HTTP_RECEIVING;
+  }
+
+  return HTTP_COMPLETE;
+}
+
+#ifdef USE_WINSOCK
+void _HttpShutdownWinsock()
+{
+  WSACleanup();
+}
+#endif
+
+struct Http *HttpCreate()
+{
+  struct Http *rtn = NULL;
+#ifdef USE_WINSOCK
+  if(!winsockInitialized)
+  {
+    WSADATA wsaData = {0};
+    int result = 0;
+
+    result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+    if(result != 0)
+    {
+      printf("WSAStartup failed with error: %d\n", result);
+      return NULL;
+    }
+
+    winsockInitialized = 1;
+    atexit(_HttpShutdownWinsock);
+  }
+#endif
+
+  rtn = palloc(struct Http);
+  rtn->raw = vector_new(char);
+  rtn->rawContent = sstream_new();
+  rtn->rawHeaders = sstream_new();
+  rtn->socks = vector_new(int);
+  rtn->customHeaders = vector_new(struct CustomHeader);
+  rtn->sock = NULL_SOCKET;
+  rtn->host = sstream_new();
+  rtn->path = sstream_new();
+  rtn->query = sstream_new();
+  rtn->post = sstream_new();
+
+  return rtn;
+}
+
+void HttpDestroy(struct Http *ctx)
+{
+  size_t i = 0;
+
+  _HttpClearSocks(ctx);
+  vector_delete(ctx->socks);
+  sstream_delete(ctx->rawHeaders);
+  sstream_delete(ctx->rawContent);
+  vector_delete(ctx->raw);
+  sstream_delete(ctx->host);
+  sstream_delete(ctx->path);
+  sstream_delete(ctx->query);
+  sstream_delete(ctx->post);
+
+  for(i = 0; i < vector_size(ctx->customHeaders); i++)
+  {
+    sstream_delete(vector_at(ctx->customHeaders, i).variable);
+    sstream_delete(vector_at(ctx->customHeaders, i).value);
+  }
+
+  vector_delete(ctx->customHeaders);
+
+  pfree(ctx);
+}
+
+void _HttpPollConnect(struct Http *ctx)
+{
+  size_t i = 0;
+  sstream *content = NULL;
+
+  //printf("polling connect\n");
+
+  for(i = 0; i < vector_size(ctx->socks); i++)
+  {
+    fd_set write_fds = {0};
+    struct timeval tv = {0};
+    int err = 0;
+    int sock = vector_at(ctx->socks, i);
+
+    FD_SET(sock, &write_fds);
+    err = select(sock + 1, NULL, &write_fds, NULL, &tv);
+
+    if(err == 0)
+    {
+      continue;
+    }
+    else if(err == -1)
+    {
+#ifdef USE_POSIX
+      close(sock);
+#endif
+#ifdef USE_WINSOCK
+      shutdown(sock, SD_BOTH);
+      closesocket(sock);
+#endif
+      vector_erase(ctx->socks, i);
+      i--;
+      continue;
+    }
+    else
+    {
+      int optval = 0;
+      int optlen = sizeof(optval);
+#ifdef USE_POSIX
+      if(getsockopt(sock, SOL_SOCKET, SO_ERROR, &optval, &optlen) == -1)
+#endif
+#ifdef USE_WINSOCK
+      if(getsockopt(sock, SOL_SOCKET, SO_ERROR, (char*)&optval, &optlen) == -1)
+#endif
+      {
+#ifdef USE_POSIX
+        close(sock);
+#endif
+#ifdef USE_WINSOCK
+        shutdown(sock, SD_BOTH);
+        closesocket(sock);
+#endif
+        vector_erase(ctx->socks, i);
+        i--;
+        continue;
+      }
+
+      if(optval != 0)
+      {
+#ifdef USE_POSIX
+        close(sock);
+#endif
+#ifdef USE_WINSOCK
+        shutdown(sock, SD_BOTH);
+        closesocket(sock);
+#endif
+        vector_erase(ctx->socks, i);
+        i--;
+        continue;
+      }
+    }
+
+    ctx->sock = sock;
+    vector_erase(ctx->socks, i);
+    _HttpClearSocks(ctx);
+    break;
+  }
+
+  if(ctx->sock == NULL_SOCKET && vector_size(ctx->socks) < 1)
+  {
+    ctx->status = -1;
+    return;
+  }
+
+  if(ctx->sock == NULL_SOCKET)
+  {
+    return;
+  }
+
+  content = sstream_new();
+
+  if(sstream_length(ctx->post) > 0)
+  {
+    sstream_push_cstr(content, "POST ");
+  }
+  else
+  {
+    sstream_push_cstr(content, "GET ");
+  }
+
+  sstream_push_cstr(content, sstream_cstr(ctx->path));
+  sstream_push_char(content, '?');
+  sstream_push_cstr(content, sstream_cstr(ctx->query));
+  sstream_push_cstr(content, " HTTP/1.0\r\n");
+  sstream_push_cstr(content, "Host: ");
+  sstream_push_cstr(content, sstream_cstr(ctx->host));
+  sstream_push_cstr(content, "\r\n");
+
+  for(i = 0; i < vector_size(ctx->customHeaders); i++)
+  {
+    sstream_push_cstr(content,
+      sstream_cstr(vector_at(ctx->customHeaders, i).variable));
+
+    sstream_push_cstr(content, ": ");
+
+    sstream_push_cstr(content,
+      sstream_cstr(vector_at(ctx->customHeaders, i).value));
+
+    sstream_push_cstr(content, "\r\n");
+  }
+
+  if(sstream_length(ctx->post) > 0)
+  {
+    sstream_push_cstr(content, "Content-Length: ");
+    sstream_push_int(content, sstream_length(ctx->post));
+    sstream_push_cstr(content, "\r\n");
+  }
+
+  sstream_push_cstr(content, "\r\n");
+
+  if(sstream_length(ctx->post) > 0)
+  {
+    sstream_push_cstr(content, sstream_cstr(ctx->post));
+  }
+
+#ifdef USE_POSIX
+  send(ctx->sock, sstream_cstr(content), sstream_length(content), MSG_NOSIGNAL);
+#endif
+#ifdef USE_WINSOCK
+  send(ctx->sock, sstream_cstr(content), sstream_length(content), 0);
+#endif
+
+  sstream_delete(content);
+}
+
+void _HttpProcessHeaders(struct Http *ctx)
+{
+  vector(sstream *) *lines = NULL;
+  vector(sstream *) *line = NULL;
+  size_t i = 0;
+  size_t j = 0;
+
+  lines = vector_new(sstream *);
+  line = vector_new(sstream *);
+  sstream_split(ctx->rawHeaders, '\n', lines);
+
+  for(i = 0; i < vector_size(lines); i++)
+  {
+    sstream_split(vector_at(lines, i), ' ', line);
+
+    if(vector_size(line) >= 2)
+    {
+      if(strcmp(sstream_cstr(vector_at(line, 0)), "HTTP/1.1") == 0 ||
+        strcmp(sstream_cstr(vector_at(line, 0)), "HTTP/1.0") == 0)
+      {
+        //printf("Status: %s\n", sstream_cstr(vector_at(line, 1)));
+        ctx->status = atoi(sstream_cstr(vector_at(line, 1)));
+      }
+    }
+
+    for(j = 0; j < vector_size(line); j++)
+    {
+      sstream_delete(vector_at(line, j));
+    }
+
+    vector_clear(line);
+  }
+
+  //printf("%i %s\n", (int)vector_size(lines), sstream_cstr(ctx->rawHeaders));
+
+  for(i = 0; i < vector_size(lines); i++)
+  {
+    sstream_delete(vector_at(lines, i));
+  }
+
+  vector_delete(lines);
+  vector_delete(line);
+}
+
+void _HttpProcessRaw(struct Http *ctx)
+{
+  if(sstream_length(ctx->rawHeaders) == 0)
+  {
+    size_t i = 0;
+    char last[5] = {0};
+
+    for(i = 0; i < vector_size(ctx->raw); i++)
+    {
+      last[0] = last[1];
+      last[1] = last[2];
+      last[2] = last[3];
+      last[3] = vector_at(ctx->raw, i);
+
+      if(strcmp(last, "\r\n\r\n") == 0)
+      {
+        size_t c = 0;
+
+        for(c = 0; c < i-3; c++)
+        {
+          sstream_push_char(ctx->rawHeaders, vector_at(ctx->raw, c));
+        }
+
+        _HttpProcessHeaders(ctx);
+        break;
+      }
+    }
+  }
+
+  if(sstream_length(ctx->rawHeaders) == 0) return;
+
+  if(ctx->sock == NULL_SOCKET)
+  {
+    size_t i = 0;
+
+    for(i = sstream_length(ctx->rawHeaders) + 4; i < vector_size(ctx->raw); i++)
+    {
+      sstream_push_char(ctx->rawContent, vector_at(ctx->raw, i));
+    }
+
+    //printf("Content: %s\n", sstream_cstr(ctx->rawContent));
+  }
+}
+
+void _HttpPollReceive(struct Http *ctx)
+{
+  fd_set read_fds = {0};
+  struct timeval tv = {0};
+  int err = 0;
+
+  //printf("polling receive\n");
+
+  FD_SET(ctx->sock, &read_fds);
+  err = select(ctx->sock + 1, &read_fds, NULL, NULL, &tv);
+
+  if(err == 0)
+  {
+    return;
+  }
+  else if(err == -1)
+  {
+    ctx->status = -1;
+#ifdef USE_POSIX
+    close(ctx->sock);
+#endif
+#ifdef USE_WINSOCK
+    shutdown(ctx->sock, SD_BOTH);
+    closesocket(ctx->sock);
+#endif
+    ctx->sock = NULL_SOCKET;
+    return;
+  }
+  else
+  {
+    char buff[BUFFER_SIZE] = {0};
+    size_t i = 0;
+#ifdef USE_POSIX
+    ssize_t n = 0;
+
+    n = read(ctx->sock, buff, BUFFER_SIZE - 1);
+
+    if(n > 0)
+#endif
+#ifdef USE_WINSOCK
+    int n = 0;
+    n = recv(ctx->sock, buff, BUFFER_SIZE - 1, 0);
+
+    if(n != SOCKET_ERROR && n != 0)
+#endif
+    {
+      for(i = 0; i < n; i++)
+      {
+        vector_push_back(ctx->raw, buff[i]);
+      }
+
+      //printf("Data waiting: %s\n", buff);
+    }
+    else
+    {
+#ifdef USE_POSIX
+      close(ctx->sock);
+#endif
+#ifdef USE_WINSOCK
+      shutdown(ctx->sock, SD_BOTH);
+      closesocket(ctx->sock);
+#endif
+      ctx->sock = NULL_SOCKET;
+    }
+
+    _HttpProcessRaw(ctx);
+  }
+}
+
+void _HttpPoll(struct Http *ctx)
+{
+  if(HttpState(ctx) == HTTP_CONNECTING)
+  {
+    _HttpPollConnect(ctx);
+  }
+  else if(HttpState(ctx) == HTTP_RECEIVING)
+  {
+    _HttpPollReceive(ctx);
+  }
+}
+
+void _HttpParseRequest(struct Http *ctx, char *url)
+{
+  size_t i = 0;
+  size_t len = 0;
+
+  sstream_clear(ctx->host);
+  sstream_clear(ctx->path);
+  sstream_clear(ctx->query);
+
+  len = strlen(url);
+
+  for(; i < len - 1; i++)
+  {
+    if(url[i] == '/' && url[i+1] == '/')
+    {
+      i+=2;
+      break;
+    }
+  }
+
+  for(; i < len; i++)
+  {
+    if(url[i] == '/')
+    {
+      break;
+    }
+
+    sstream_push_char(ctx->host, url[i]);
+  }
+
+  for(; i < len; i++)
+  {
+    if(url[i] == '?')
+    {
+      i++;
+      break;
+    }
+
+    sstream_push_char(ctx->path, url[i]);
+  }
+
+  for(; i < len; i++)
+  {
+    sstream_push_char(ctx->query, url[i]);
+  }
+
+  //printf("Host: %s\n", sstream_cstr(ctx->host));
+  //printf("Path: %s\n", sstream_cstr(ctx->path));
+  //printf("Query: %s\n", sstream_cstr(ctx->query));
+}
+
+void HttpRequest(struct Http *ctx, char *url, char *post)
+{
+  struct addrinfo hints = {0};
+  struct addrinfo *res = NULL;
+  struct addrinfo *ent = NULL;
+  int err = 0;
+  int flags = 0;
+
+  if(HttpState(ctx) != HTTP_COMPLETE) return;
+
+  sstream_clear(ctx->post);
+
+  if(post)
+  {
+    sstream_push_cstr(ctx->post, post);
+  }
+
+  _HttpParseRequest(ctx, url);
+
+  sstream_clear(ctx->rawHeaders);
+  sstream_clear(ctx->rawContent);
+  vector_clear(ctx->raw);
+  ctx->status = 0;
+
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+
+  err = getaddrinfo(sstream_cstr(ctx->host), "80", &hints, &res);
+
+  if(err)
+  {
+    ctx->status = -1;
+    return;
+  }
+
+  for(ent = res; ent != NULL; ent = ent->ai_next)
+  {
+    int sock = NULL_SOCKET;
+
+    if(ent->ai_family != AF_INET && ent->ai_family != AF_INET6)
+    {
+      continue;
+    }
+
+    sock = socket(ent->ai_family, ent->ai_socktype, 0);
+
+    if(sock == NULL_SOCKET)
+    {
+      continue;
+    }
+
+#ifdef USE_POSIX
+    flags = fcntl(sock, F_GETFL);
+
+    if(fcntl(sock, F_SETFL, flags | O_NONBLOCK) == -1)
+    {
+
+      close(sock);
+      continue;
+    }
+#endif
+#ifdef USE_WINSOCK
+    {
+    unsigned nonblocking = 1;
+    ioctlsocket(sock, FIONBIO, &nonblocking);
+    }
+#endif
+
+    err = connect(sock, (struct sockaddr *)ent->ai_addr, ent->ai_addrlen);
+
+#ifdef USE_POSIX
+    if(err == -1)
+#endif
+#ifdef USE_WINSOCK
+    if(err == SOCKET_ERROR)
+#endif
+    {
+#ifdef USE_POSIX
+      if(errno == EINPROGRESS)
+#endif
+#ifdef USE_WINSOCK
+      if(WSAGetLastError() == WSAEWOULDBLOCK)
+#endif
+      {
+        vector_push_back(ctx->socks, sock);
+      }
+      else
+      {
+#ifdef USE_POSIX
+        close(sock);
+#endif
+#ifdef USE_WINSOCK
+        shutdown(sock, SD_BOTH);
+        closesocket(sock);
+#endif
+      }
+
+      continue;
+    }
+
+    ctx->sock = sock;
+    _HttpClearSocks(ctx);
+  }
+
+  if(ctx->sock == NULL_SOCKET && vector_size(ctx->socks) < 1)
+  {
+    ctx->status = -1;
+  }
+
+  freeaddrinfo(res);
+}
+
+int HttpRequestComplete(struct Http *ctx)
+{
+  _HttpPoll(ctx);
+
+  if(HttpState(ctx) == HTTP_COMPLETE)
+  {
+    return 1;
+  }
+
+  return 0;
+}
+
+int HttpResponseStatus(struct Http *ctx)
+{
+  return ctx->status;
+}
+
+char *HttpResponseContent(struct Http *ctx)
+{
+  return sstream_cstr(ctx->rawContent);
+}
+
+#ifndef AMALGAMATION
+  #include "Collection.h"
+  #include "Document.h"
+  #include "State.h"
+
+  #include "palloc/palloc.h"
+#endif
+
+#include <stdio.h>
+#include <string.h>
+
+void bgCollectionCreate(char *cln)
+{
+  struct bgCollection* newCln;
+  newCln = palloc(struct bgCollection);
+  
+  newCln->name = sstream_new();
+  sstream_push_cstr(newCln->name, cln);
+
+  newCln->documents = vector_new(struct bgDocument*);
+
+  vector_push_back(bg->collections, newCln);
+  /*Do I then free newCln, under the assumption the memory has moved?*/
+  /*pfree(newCln);*/
+}
+
+void bgCollectionAdd(char *cln, struct bgDocument *doc)
+{
+  vector_push_back(bgCollectionGet(cln)->documents, doc);
+
+  /* Again, could be more complex */
+  doc = NULL;
+}
+
+void bgCollectionUpload(char *cln)
+{
+  /* New thread is launched to carry out this process 
+  DEBUG Placeholder to serialise and print instead
+  */
+  char* ser = NULL;
+  struct bgCollection* c = bgCollectionGet(cln);
+  JSON_Value* v = vector_at(c->documents, 0)->rootVal;
+  size_t i = 0;
+  ser = json_serialize_to_string_pretty(v);
+
+  // LEAK: ser must be free'd when no longer in use.
+
+  if(ser != NULL)
+    puts(ser);
+  else
+    puts("shit");
+
+
+  for(i = 0; i < vector_size(c->documents); i++)
+  {
+    // NOTE: Should this need a NULL check?
+    if(vector_at(c->documents, i))
+    {
+      bgDocumentDestroy(vector_at(c->documents, i));
+    }
+  }
+
+  vector_delete(c->documents);
+
+  // NOTE: Instead of deleting the vector each time, just use vector_clear
+  // to reuse and only delete it when the collection is destroyed.
+
+  c->documents = NULL;
+}
+
+void bgCollectionSaveAndDestroy(struct bgCollection *cln)
+{
+  bgCollectionUpload(sstream_cstr(cln->name));
+  bgCollectionDestroy(cln);
+}
+
+/* Destroys collection and containing documents w/o upload */
+void bgCollectionDestroy(struct bgCollection *cln)
+{
+  /* Document destruction is Possibly complex */
+  size_t i = 0;
+  if(cln->documents != NULL)
+  {
+    for(i = 0; i < vector_size(cln->documents); i++)
+    {
+      if(vector_at(cln->documents, i))
+      {
+        bgDocumentDestroy(vector_at(cln->documents, i));
+      }
+    }
+    vector_delete(cln->documents);
+  }
+
+  sstream_delete(cln->name);
+
+  pfree(cln);
+
+  cln = NULL;
+}
+/*
+  Helper function to get the collection from the state by name 
+  returns NULL if no collection by cln exists
+*/
+struct bgCollection *bgCollectionGet(char *cln)
+{
+  size_t i = 0;
+  for(i = 0; i < vector_size(bg->collections); i++)
+  {
+    if(strcmp(cln, sstream_cstr(vector_at(bg->collections, i)->name)) == 0)
+    {
+      return vector_at(bg->collections, i);
+    }
+  }
+
+  return NULL;
+}
+
+#ifndef AMALGAMATION
+  #include "Document.h"
+  #include "parson.h"
+
+  #include <palloc/palloc.h>
+  #include <palloc/sstream.h>
+#endif
+
+//#include <stdlib.h>
+
+struct bgDocument *bgDocumentCreate()
+{
+  struct bgDocument *rtn = NULL;
+ 
+  rtn = palloc(struct bgDocument);
+
+  rtn->rootVal = json_value_init_object();
+  rtn->rootObj = json_value_get_object(rtn->rootVal);
+  rtn->rootArr = json_value_get_array(rtn->rootVal);
+
+  return rtn;
+}
+
+void bgDocumentDestroy(struct bgDocument *doc)
+{
+  /*unwinds json_val list structure and frees memory*/
+  json_value_free(doc->rootVal);
+
+  // LEAK:
+  // pfree(doc)?
+}
+
+void bgDocumentAddCStr(struct bgDocument *doc, char *path, char *val)
+{
+  sstream* ctx = sstream_new();
+  size_t i = 0;
+  vector(sstream*) *out = vector_new(sstream*); 
+  
+  JSON_Status status = 5;
+
+  sstream_push_cstr(ctx, path);
+  sstream_split(ctx, '.', out);
+ 
+  if(vector_size(out) == 0)
+  {
+    status = json_object_set_string(doc->rootObj, path, val);
+    printf("Status: ");
+    printf(path);
+    printf(" %d\n", status);
+  }
+  else
+  {
+    status = json_object_dotset_string(doc->rootObj, path, val);
+    printf("Status: ");
+    printf(path);
+    printf(" %d\n", status);
+  }
+
+  sstream_delete(ctx);
+  if(vector_size(out) > 0)
+  {
+    for(i = 0; i < vector_size(out); i++)
+    {
+      if(vector_at(out, i))
+      {
+        sstream_delete(vector_at(out, i));
+      }
+    }
+  }
+  vector_delete(out);
+}
+
+void bgDocumentAddInt(struct bgDocument *doc, char *path, int val)
+{
+  sstream* ctx = sstream_new();
+  size_t i = 0;
+  vector(sstream*) *out = vector_new(sstream*); 
+  
+  JSON_Status status = 5;
+  
+  sstream_push_cstr(ctx, path);
+  sstream_split(ctx, '.', out);
+ 
+  if(vector_size(out) == 0)
+  {
+    status = json_object_set_number(doc->rootObj, path, (int)val);
+    printf("Status: ");
+    printf(path);
+    printf(" %d\n", status);
+  }
+  else
+  {
+    status = json_object_dotset_number(doc->rootObj, path, (int)val);
+    printf("Status: ");
+    printf(path);
+    printf(" %d\n", status);
+  }
+
+  sstream_delete(ctx);
+  if(vector_size(out) > 0)
+  {
+    for(i = 0; i < vector_size(out); i++)
+    {
+      if(vector_at(out, i))
+      {
+        sstream_delete(vector_at(out, i));
+      }
+    }
+  }
+  vector_delete(out);
+}
+
+void bgDocumentAddDouble(struct bgDocument *doc, char *path, double val)
+{
+  sstream* ctx = sstream_new();
+  size_t i = 0;
+  vector(sstream*) *out = vector_new(sstream*); 
+  
+  JSON_Status status = 5;
+  
+  sstream_push_cstr(ctx, path);
+  sstream_split(ctx, '.', out);
+ 
+  if(vector_size(out) == 0)
+  {
+    status = json_object_set_number(doc->rootObj, path, val);
+    printf("Status: ");
+    printf(path);
+    printf(" %d\n", status);
+  }
+  else
+  {
+    status = json_object_dotset_number(doc->rootObj, path, val);
+    printf("Status: ");
+    printf(path);
+    printf(" %d\n", status);
+  }
+
+  sstream_delete(ctx);
+  if(vector_size(out) > 0)
+  {
+    for(i = 0; i < vector_size(out); i++)
+    {
+      if(vector_at(out, i))
+      {
+        sstream_delete(vector_at(out, i));
+      }
+    }
+  }
+  vector_delete(out);
+}
+
+void bgDocumentAddBool(struct bgDocument *doc, char *path, int val)
+{
+  sstream* ctx = sstream_new();
+  size_t i = 0;
+  vector(sstream*) *out = vector_new(sstream*); 
+  
+  JSON_Status status = 5;
+  
+  sstream_push_cstr(ctx, path);
+  sstream_split(ctx, '.', out);
+ 
+  if(vector_size(out) == 0)
+  {
+    status = json_object_set_boolean(doc->rootObj, path, val);
+    printf("Status: ");
+    printf(path);
+    printf(" %d\n", status);
+  }
+  else
+  {
+    status = json_object_dotset_boolean(doc->rootObj, path, val);
+    printf("Status: ");
+    printf(path);
+    printf(" %d\n", status);
+  }
+
+  sstream_delete(ctx);
+  if(vector_size(out) > 0)
+  {
+    for(i = 0; i < vector_size(out); i++)
+    {
+      if(vector_at(out, i))
+      {
+        sstream_delete(vector_at(out, i));
+      }
+    }
+  }
+  vector_delete(out);
+}
+
 /*
  Parson ( http://kgabis.github.com/parson/ )
  Copyright (c) 2012 - 2017 Krzysztof Gabis
@@ -2003,3 +3592,68 @@ void json_set_allocation_functions(JSON_Malloc_Function malloc_fun, JSON_Free_Fu
     parson_malloc = malloc_fun;
     parson_free = free_fun;
 }
+
+#ifndef AMALGAMATION
+  #include "State.h"
+  #include "Collection.h"
+  #include "parson.h"
+
+  #include <palloc/palloc.h>
+#endif
+
+struct bgState *bg;
+
+void bgAuth(char *url, char *path, char *guid, char *key)
+{
+  /*
+ANN_NEW(bg,
+  bg = calloc(1, sizeof(*bg));
+)
+ANN_INC(bg->collections,
+  bg->collections = vector_create(struct bgCollection *);
+)
+  bg->interval = 2000;
+  */
+  bg = palloc(struct bgState);
+  bg->collections = vector_new(struct bgCollection *);
+  bg->interval = 2000;
+  
+  /* I'm sure there's a way to do this
+#ifdef PALLOC_ACTIVE
+  json_set_allocation_functions(palloc(), pfree);
+#endif
+  */
+}
+
+void bgCleanup()
+{
+  /*
+  Looping throough and calling 'destructor'
+  and then deleting remnants with vector_delete
+  */
+  size_t i = 0;
+  for(i = 0; i < vector_size(bg->collections); i ++)
+  {
+    /*NULLS pointer in function*/
+    bgCollectionDestroy(vector_at(bg->collections, i));
+  }
+  vector_delete(bg->collections);
+  
+  pfree(bg);
+}
+
+void bgInterval(int milli)
+{
+  bg->interval = milli;
+}
+
+void bgErrorFunc(void (*errorFunc)(char *cln, int code))
+{
+  bg->errorFunc = errorFunc;
+}
+
+void bgSuccessFunc(void (*successFunc)(char *cln, int count))
+{
+  bg->successFunc = successFunc;
+}
+

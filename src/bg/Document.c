@@ -1,9 +1,10 @@
-#include "Document.h"
+#ifndef AMALGAMATION
+  #include "Document.h"
+  #include "parson.h"
 
-#include "palloc/palloc.h"
-#include "palloc/sstream.h"
-
-#include "parson.h"
+  #include <palloc/palloc.h>
+  #include <palloc/sstream.h>
+#endif
 
 //#include <stdlib.h>
 

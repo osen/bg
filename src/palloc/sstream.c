@@ -1,5 +1,7 @@
-#include "sstream.h"
-#include "palloc.h"
+#ifndef AMALGAMATION
+  #include "sstream.h"
+  #include "palloc.h"
+#endif
 
 #include <string.h>
 #include <stdio.h>

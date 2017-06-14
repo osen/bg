@@ -1,14 +1,18 @@
-#include <bg/analytics.h>
-#include <http/http.h>
+#ifdef AMALGAMATION_EXAMPLE
+  #include "bg_analytics.h"
+#else
+  #include <bg/analytics.h>
+  #include <http/http.h>
+#endif
 
 #ifdef _WIN32
   #include <windows.h>
+#else
+  #include <unistd.h>
 #endif
 
 #include <stdlib.h>
 #include <stdio.h>
-
-#undef PALLOC_ACTIVE
 
 void on_error(char *cln, int code)
 {

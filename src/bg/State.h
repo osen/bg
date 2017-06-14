@@ -1,7 +1,9 @@
 #ifndef BG_STATE_H
 #define BG_STATE_H
 
-#include <palloc/vector.h>
+#ifndef AMALGAMATION
+  #include <palloc/vector.h>
+#endif
 
 struct bgCollection;
 

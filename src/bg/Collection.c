@@ -1,9 +1,11 @@
-#include "Collection.h"
-#include "Document.h"
+#ifndef AMALGAMATION
+  #include "Collection.h"
+  #include "Document.h"
+  #include "State.h"
 
-#include "State.h"
+  #include "palloc/palloc.h"
+#endif
 
-#include "palloc/palloc.h"
 #include <stdio.h>
 #include <string.h>
 

@@ -1,9 +1,10 @@
 #ifndef BG_COLLECTION_H
 #define BG_COLLECTION_H
 
-//#include <ann/vector.h>
-#include "palloc/vector.h"
-#include "palloc/sstream.h"
+#ifndef AMALGAMATION
+  #include "palloc/vector.h"
+  #include "palloc/sstream.h"
+#endif
 
 struct bgDocument;
 struct StringStream;
